@@ -1,0 +1,99 @@
+# Copy to configs/config.yaml and fill values.
+
+schedule:
+  time: "08:45"
+  timezone: "Asia/Shanghai"
+
+limits:
+  contest_candidates: 15
+  activity_candidates: 15
+  internship_candidates: 30
+
+output:
+  daily_items_per_category: 1
+  display_time_preference: "last_seen"  # first_seen | last_seen
+
+staleness:
+  max_days_active: 30
+
+deadline:
+  remind_days: 14
+
+dedup:
+  by_url: true
+
+internship:
+  default_work_mode: "offline"  # remote/onsite/hybrid/offline
+
+language:
+  primary: "zh"
+
+translation:
+  english_only: true
+  mode: "title_and_summary"
+
+keywords:
+  include: ["cv", "computer vision", "多模态", "AIGC", "VLM", "LLM", "算法", "竞赛", "开发者"]
+  exclude: ["测试", "运维", "销售"]
+
+pm:
+  prefer_ai_pm: true
+  allow_general_pm_fallback: true
+
+sources:
+  domains_allowlist_autogen: true
+  allowlist_file: "configs/domains_allowlist.yaml"
+  enable_live_collect: false  # true to enable live HTTP collection
+  kaggle:
+    use_api: true
+    search_terms: ["vision", "image", "computer vision", "detection", "segmentation", "multimodal"]
+    pages: 1
+  list_pages:
+    contest: ["https://www.kaggle.com/competitions?sortBy=recentlyCreated"]
+    activity: ["https://devpost.com/hackathons"]
+    internship: [
+      "https://mp.weixin.qq.com" # example landing; replace with real list pages you prefer
+    ]
+
+network:
+  timeout_seconds: 10
+  retries: 2
+  http_proxy: ""
+  https_proxy: ""
+
+llm:
+  enabled: true
+  provider: "openai_compatible"
+  base_url: "https://integrate.api.nvidia.com/v1"  # NVIDIA AI Endpoints (OpenAI-compatible)
+  model: "meta/llama-3.1-8b-instruct"              # choose a supported model id
+  temperature: 0.2
+  timeout_seconds: 20
+  api_key_env: "NVIDIA_API_KEY"                    # set this env var with your key
+
+smtp:
+  host: "smtp.163.com"
+  port: 465
+  use_tls: true
+  sender_email: "<FILL_ME>"
+  receiver_email: "<FILL_ME>"
+  # password via env: SMTP_PASSWORD
+
+alerts:
+  enabled: true
+  send_separate_email: true
+  zero_candidates_k: 2
+
+selection:
+  min_score:
+    contest: 0.5
+    activity: 0.5
+    internship: 0.5
+
+scoring:
+  weights:
+    w_new: 2.0
+    w_time: 1.0
+    w_scale: 1.0
+    w_topic: 1.5
+    w_urgency: 0.5
+

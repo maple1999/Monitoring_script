@@ -52,6 +52,12 @@ def collect_kaggle_contests(
                             deadline = None
                         description = getattr(c, "description", None) or getattr(c, "subTitle", None) or ""
                         org = getattr(c, "organizationName", None) or getattr(c, "organization_name", None)
+                        reward = getattr(c, "reward", None)
+                        eval_metric = getattr(c, "evaluationMetric", None)
+                        max_team = getattr(c, "maxTeamSize", None)
+                        max_daily = getattr(c, "maxDailySubmissions", None)
+                        category = getattr(c, "category", None)
+                        host_segment = getattr(c, "hostSegment", None)
                         url = f"https://www.kaggle.com/competitions/{ref}"
 
                         # keyword filter on title + description
@@ -61,15 +67,45 @@ def collect_kaggle_contests(
                         if exclude_kw and _string_contains_any(blob, exclude_kw):
                             continue
 
+                        # Try enrich with competition_view
+                        try:
+                            if hasattr(api, "competition_view"):
+                                det = api.competition_view(ref)  # type: ignore[attr-defined]
+                                # Often same fields; keep getattr fallback
+                                reward = reward or getattr(det, "reward", None)
+                                eval_metric = eval_metric or getattr(det, "evaluationMetric", None)
+                                max_team = max_team or getattr(det, "maxTeamSize", None)
+                                max_daily = max_daily or getattr(det, "maxDailySubmissions", None)
+                                org = org or getattr(det, "organizationName", None)
+                                category = category or getattr(det, "category", None)
+                                host_segment = host_segment or getattr(det, "hostSegment", None)
+                        except Exception:
+                            pass
+
+                        req_parts: List[str] = []
+                        if eval_metric:
+                            req_parts.append(f"评测指标: {eval_metric}")
+                        if max_daily:
+                            req_parts.append(f"每日提交上限: {max_daily}")
+                        if max_team:
+                            req_parts.append(f"团队规模上限: {max_team}")
+                        requirements = "; ".join(req_parts) if req_parts else None
+
+                        tags = ["cv"]
+                        for t in (category, host_segment):
+                            if t:
+                                tags.append(str(t).lower())
+
                         results.append(
                             {
                                 "source": "kaggle",
                                 "url": url,
                                 "title": title,
                                 "summary": description or None,
+                                "requirements": requirements,
                                 "deadline": str(deadline) if deadline else None,
                                 "company_or_org": org,
-                                "tags": ["cv"],
+                                "tags": tags,
                             }
                         )
                         if len(results) >= limit:
@@ -79,4 +115,3 @@ def collect_kaggle_contests(
         return results, f"kaggle_api_error: {e}"
 
     return results, None
-

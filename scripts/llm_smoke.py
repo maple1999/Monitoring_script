@@ -10,6 +10,8 @@ from src.llm import generate_llm_block
 
 def main():
     cfg = load_config()
+    llm_env = cfg.get('llm', {}).get('api_key_env', 'NVIDIA_API_KEY')
+    has_key = True if os.getenv(llm_env) else False
     item = Item(
         item_id=gen_item_id("smoke", "https://example.com"),
         category="contest",
@@ -22,7 +24,7 @@ def main():
     )
     block = generate_llm_block(cfg, item)
     if not block:
-        print("LLM smoke test failed or returned empty output.")
+        print(f"LLM smoke test failed or returned empty output. env {llm_env} set: {has_key}")
         sys.exit(2)
     print("LLM block:\n" + block)
     sys.exit(0)
@@ -30,4 +32,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
