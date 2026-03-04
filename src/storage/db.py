@@ -155,6 +155,21 @@ class Database:
         self.conn.commit()
         return int(cur.lastrowid)
 
+    def update_run(self, run_id: int, status: RunStatus, stats_json: Optional[str] = None, error_summary: Optional[str] = None) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE runs SET status = ?, stats_json = ?, error_summary = ? WHERE run_id = ?",
+            (status.value, stats_json, error_summary, run_id),
+        )
+        self.conn.commit()
+
+    def last_runs(self, limit: int = 1) -> List[Dict[str, Any]]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM runs ORDER BY run_id DESC LIMIT ?", (limit,))
+        rows = cur.fetchall()
+        col = [c[0] for c in cur.description]
+        return [dict(zip(col, r)) for r in rows]
+
     def log_send(self, run_id: Optional[int], mail_type: str, to_addr: str, subject: str, status: str, error: Optional[str] = None):
         cur = self.conn.cursor()
         cur.execute(
@@ -189,4 +204,3 @@ class Database:
             return []
         col = [c[0] for c in cur.description]
         return [dict(zip(col, r)) for r in rows]
-

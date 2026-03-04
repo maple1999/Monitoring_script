@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from typing import Dict, List
 
 from src.config import load_config
@@ -25,8 +26,11 @@ from src.utils.dates import parse_date_basic, is_within_days
 def run_once(dry_run: bool = False) -> int:
     cfg = load_config()
     db = Database()
+    prev_runs = db.last_runs(1)
+    prev_status = prev_runs[0]["status"] if prev_runs else None
     run_id = db.insert_run(RunStatus.SUCCESS, stats_json=None, error_summary=None)
     degraded_notice: List[str] = []
+    alert_events: List[Dict[str, str]] = []
 
     try:
         limits = cfg.get("limits", {})
@@ -37,6 +41,9 @@ def run_once(dry_run: bool = False) -> int:
         }
 
         items_by_cat: Dict[str, List[Item]] = {"contest": [], "activity": [], "internship": []}
+        stats: Dict[str, Dict[str, int]] = {"contest": {}, "activity": {}, "internship": {}}
+        failed_pages_all: List[str] = []
+
         include_kw = list(cfg.get("keywords", {}).get("include", []))
         exclude_kw = list(cfg.get("keywords", {}).get("exclude", []))
         net_cfg = cfg.get("network", {})
@@ -56,15 +63,87 @@ def run_once(dry_run: bool = False) -> int:
             if live_enabled:
                 pages = list(list_pages.get(cat, []))
                 allow_domains = list(allow.get(cat, []))
-                raws = collect_from_pages(cat, pages, allow_domains, include_kw, exclude_kw, per_cat_limits[cat], timeout, proxies)
+                raws, failed_pages = collect_from_pages(
+                    cat, pages, allow_domains, include_kw, exclude_kw, per_cat_limits[cat], timeout, proxies
+                )
+                failed_pages_all.extend(failed_pages)
             else:
                 raws = collect_stub(cat, per_cat_limits[cat])
+
+            raw_count = len(raws)
             items = [normalize_raw(cat, r) for r in raws]
-            items, _ = apply_dedup(db, items, by_url=bool(cfg.get("dedup", {}).get("by_url", True)))
+            items, dropped = apply_dedup(db, items, by_url=bool(cfg.get("dedup", {}).get("by_url", True)))
+
+            # filter expired for contest/activity
+            expired_filtered = 0
+            if cat in ("contest", "activity"):
+                kept: List[Item] = []
+                for it in items:
+                    if it.deadline:
+                        dt = parse_date_basic(it.deadline)
+                        if dt and dt < datetime.now(timezone.utc):
+                            it.status = "expired"
+                            expired_filtered += 1
+                            continue
+                    kept.append(it)
+                items = kept
+
             score_items(cfg, items)
             items_by_cat[cat] = items
+            stats[cat] = {
+                "raw": raw_count,
+                "dedup_dropped": int(dropped),
+                "expired_filtered": int(expired_filtered),
+                "kept": len(items),
+                "new": sum(1 for i in items if i.is_new),
+            }
 
         selected = pick_top1_per_category(db, cfg, items_by_cat)
+
+        # quality gate: min score per category
+        min_score = cfg.get("selection", {}).get("min_score", {})
+        for cat, it in list(selected.items()):
+            thr = float(min_score.get(cat, 0.0))
+            if (it.match_score or 0.0) < thr:
+                better = [x for x in items_by_cat.get(cat, []) if (x.match_score or 0.0) >= thr]
+                if better:
+                    selected[cat] = sorted(better, key=lambda x: (-(x.is_new), -(x.match_score or 0.0)))[0]
+                else:
+                    # try history
+                    hist = db.history_candidates(cat, int(cfg.get("staleness", {}).get("max_days_active", 30)), limit=10)
+                    picked = None
+                    for h in hist:
+                        try:
+                            ms = float(h.get("match_score") or 0.0)
+                        except Exception:
+                            ms = 0.0
+                        if ms >= thr:
+                            picked = h
+                            break
+                    if picked:
+                        selected[cat] = Item(
+                            item_id=picked["item_id"],
+                            category=picked["category"],
+                            title=picked["title"],
+                            url=picked["url"],
+                            source=picked["source"],
+                            company_or_org=picked.get("company_or_org"),
+                            summary=picked.get("summary"),
+                            requirements=picked.get("requirements"),
+                            location=picked.get("location"),
+                            work_mode=picked.get("work_mode"),
+                            deadline=picked.get("deadline"),
+                            title_en=picked.get("title_en"),
+                            title_zh=picked.get("title_zh"),
+                            summary_en=picked.get("summary_en"),
+                            summary_zh=picked.get("summary_zh"),
+                            tags=(picked.get("tags") or "").split(",") if picked.get("tags") else [],
+                            is_new=False,
+                            status=picked.get("status", "active"),
+                        )
+                    else:
+                        degraded_notice.append(f"{cat} 匹配度低于阈值")
+                        alert_events.append({"type": "Content", "affected": cat, "msg": "匹配度低于阈值"})
 
         # LLM block generation per selected item
         llm_fail = False
@@ -72,13 +151,13 @@ def run_once(dry_run: bool = False) -> int:
             try:
                 block = generate_llm_block(cfg, it)
                 it.llm_block = block
-                # translate title/summary if pure English and requested
                 translate_title_summary(cfg, it)
-            except LLMError as e:
+            except LLMError:
                 llm_fail = True
                 it.llm_block = None
         if llm_fail:
             degraded_notice.append("LLM 不可用，已使用 Fallback 文本")
+            alert_events.append({"type": "LLM", "affected": "比赛/活动/实习", "msg": "LLM 失败或不可用"})
 
         # deadline reminders
         remind_days = int(cfg.get("deadline", {}).get("remind_days", 14))
@@ -90,12 +169,58 @@ def run_once(dry_run: bool = False) -> int:
                 if dt and is_within_days(dt, remind_days):
                     reminders.append(f"{cat}『{it.title}』临近截止: {it.deadline}")
 
+        # crawl anomalies: zero candidates K days
+        zero_k = int(cfg.get("alerts", {}).get("zero_candidates_k", 2))
+        for cat in ("contest", "activity", "internship"):
+            if stats[cat]["kept"] == 0:
+                prevs = db.last_runs(max(0, zero_k - 1))
+                zero_chain = 1
+                for pr in prevs:
+                    try:
+                        st = json.loads(pr.get("stats_json") or "{}")
+                        if st.get("stats", {}).get(cat, {}).get("kept", 0) == 0:
+                            zero_chain += 1
+                        else:
+                            break
+                    except Exception:
+                        break
+                if zero_chain >= zero_k:
+                    degraded_notice.append(f"{cat} 连续{zero_chain}天候选为0，已降级")
+                    alert_events.append({"type": "Crawl", "affected": cat, "msg": f"连续{zero_chain}天候选为0"})
+
+        # repetitive duplicates anomaly
+        for cat in ("contest", "activity", "internship"):
+            raw_c = stats[cat].get("raw", 0)
+            drop_c = stats[cat].get("dedup_dropped", 0)
+            if raw_c >= 5 and raw_c > 0 and (drop_c / float(raw_c)) >= 0.8:
+                degraded_notice.append(f"{cat} 候选重复率过高")
+                alert_events.append({"type": "Crawl", "affected": cat, "msg": "重复≥80%"})
+
+        # overview lines
+        counts_line = (
+            f"候选抓取数量（比赛 {stats['contest'].get('raw',0)} / 活动 {stats['activity'].get('raw',0)} / 实习 {stats['internship'].get('raw',0)}）"
+        )
+        new_line = (
+            f"新增（比赛 {stats['contest'].get('new',0)} / 活动 {stats['activity'].get('new',0)} / 实习 {stats['internship'].get('new',0)}）"
+        )
+        failures_line = "来源失败页：{}（不展开）".format(len(failed_pages_all)) if failed_pages_all else ""
+
         notice_parts = []
+        if prev_status == RunStatus.FAILED.value:
+            notice_parts.append("上次失败")
         if degraded_notice:
             notice_parts.extend(degraded_notice)
         if reminders:
             notice_parts.append("；".join(reminders))
-        overview = {"status": "degraded" if degraded_notice else "success", "notice": "；".join(notice_parts)}
+        overview = {
+            "status": "degraded" if (degraded_notice or failed_pages_all) else "success",
+            "notice": "；".join(notice_parts),
+            "counts_line": counts_line,
+            "new_line": new_line,
+            "failures_line": failures_line,
+            "ordering": cfg.get("output", {}).get("display_time_preference", "last_seen"),
+        }
+
         email = render_email(selected, overview)
 
         if not dry_run:
@@ -103,30 +228,38 @@ def run_once(dry_run: bool = False) -> int:
                 send_email(cfg, email["subject"], email["text"], email["html"])
                 db.log_send(run_id, "daily", cfg.get("smtp", {}).get("receiver_email", ""), email["subject"], "success")
             except MailError as e:
-                db.log_send(run_id, "daily", cfg.get("smtp", {}).get("receiver_email", ""), email["subject"], "failed", error=str(e))
-                # try to send alert via alert channel (could be same smtp though)
+                db.log_send(
+                    run_id, "daily", cfg.get("smtp", {}).get("receiver_email", ""), email["subject"], "failed", error=str(e)
+                )
+                alert_events.append({"type": "Run", "affected": "全量", "msg": f"SMTP 失败: {str(e)}"})
+                db.update_run(run_id, RunStatus.FAILED, stats_json=None, error_summary=f"mail failed: {str(e)}")
                 send_alert(cfg, run_id, "Run", "全量", f"SMTP 失败: {str(e)}", degraded=False)
-                db.insert_run(RunStatus.FAILED, stats_json=None, error_summary=f"mail failed: {str(e)}")
                 return 2
         else:
             print(email["subject"])
             print(email["text"])  # for preview
 
-        # persist selected and candidates
+        # persist candidates
         for cat, items in items_by_cat.items():
             for it in items:
                 db.upsert_item(it)
 
-        if degraded_notice:
-            db.insert_run(RunStatus.DEGRADED, stats_json=json.dumps({"notice": degraded_notice}, ensure_ascii=False))
-            send_alert(cfg, run_id, "LLM", "比赛/活动/实习", "; ".join(degraded_notice), degraded=True)
+        # finalize run status
+        stats_payload = {"stats": stats, "failed_pages": failed_pages_all}
+        if degraded_notice or failed_pages_all:
+            db.update_run(run_id, RunStatus.DEGRADED, stats_json=json.dumps(stats_payload, ensure_ascii=False))
         else:
-            db.insert_run(RunStatus.SUCCESS, stats_json=None)
+            db.update_run(run_id, RunStatus.SUCCESS, stats_json=json.dumps(stats_payload, ensure_ascii=False))
+
+        # separate alerts if enabled
+        if alert_events and cfg.get("alerts", {}).get("send_separate_email", True):
+            for ev in alert_events:
+                send_alert(cfg, run_id, ev["type"], ev["affected"], ev["msg"], degraded=True)
         return 0
 
     except Exception as e:
         send_alert(cfg, run_id, "Run", "全量", f"异常: {str(e)}", degraded=False)
-        db.insert_run(RunStatus.FAILED, stats_json=None, error_summary=str(e))
+        db.update_run(run_id, RunStatus.FAILED, stats_json=None, error_summary=str(e))
         return 3
 
 
@@ -143,3 +276,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

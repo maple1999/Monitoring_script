@@ -11,6 +11,7 @@ limits:
 
 output:
   daily_items_per_category: 1
+  display_time_preference: "last_seen"  # first_seen | last_seen
 
 staleness:
   max_days_active: 30
@@ -75,6 +76,13 @@ smtp:
 alerts:
   enabled: true
   send_separate_email: true
+  zero_candidates_k: 2
+
+selection:
+  min_score:
+    contest: 0.5
+    activity: 0.5
+    internship: 0.5
 
 scoring:
   weights:

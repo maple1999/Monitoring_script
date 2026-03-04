@@ -42,4 +42,3 @@ def pick_top1_per_category(db: Database, cfg: Dict, items_by_cat: Dict[str, List
             )
             result[cat] = item
     return result
-

@@ -50,12 +50,14 @@ def collect_from_pages(
     limit: int,
     timeout: int,
     proxies: Dict[str, str] | None = None,
-) -> List[Dict[str, Any]]:
+) -> tuple[List[Dict[str, Any]], List[str]]:
     results: List[Dict[str, Any]] = []
+    failed_pages: List[str] = []
     for pg in pages:
         try:
             html = _fetch(pg, timeout=timeout, proxies=proxies)
         except Exception:
+            failed_pages.append(pg)
             continue
         for url, text in _extract_links(pg, html):
             dom = derive_domain(url)
@@ -76,5 +78,4 @@ def collect_from_pages(
                 break
         if len(results) >= limit:
             break
-    return results
-
+    return results, failed_pages
