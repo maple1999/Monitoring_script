@@ -10,7 +10,7 @@ from src.config import load_config
 from src.storage.db import Database
 from src.models import Item, RunStatus
 from src.collector.stub import collect as collect_stub
-from src.collector.live import collect_from_pages
+from src.collector.live import collect_from_pages, fetch_detail
 from src.collector.kaggle_api import collect_kaggle_contests
 from src.parser.normalizer import normalize_raw
 from src.dedup import apply_dedup
@@ -109,6 +109,30 @@ def run_once(dry_run: bool = False) -> int:
             }
 
         selected = pick_top1_per_category(db, cfg, items_by_cat)
+
+        # Deep-fetch Top1 to enrich summary/requirements/context before LLM
+        deep_fetch = bool(cfg.get("sources", {}).get("deep_fetch_top1", True))
+        if deep_fetch:
+            for cat, it in selected.items():
+                need = (not it.summary) or (not it.requirements) or (not it.llm_context)
+                if not need:
+                    continue
+                try:
+                    det = fetch_detail(cat, it.url, timeout=timeout, proxies=proxies)
+                    if det.get("summary") and not it.summary:
+                        it.summary = det["summary"]
+                    if det.get("requirements") and not it.requirements:
+                        it.requirements = det["requirements"]
+                    if det.get("deadline") and not it.deadline and cat in ("contest", "activity"):
+                        it.deadline = det["deadline"]
+                    if det.get("location") and not it.location and cat == "internship":
+                        it.location = det["location"]
+                    if det.get("work_mode") and not it.work_mode and cat == "internship":
+                        it.work_mode = det["work_mode"]
+                    if det.get("llm_context") and (not it.llm_context or len(it.llm_context) < 200):
+                        it.llm_context = det["llm_context"]
+                except Exception:
+                    pass
 
         # quality gate: min score per category
         min_score = cfg.get("selection", {}).get("min_score", {})

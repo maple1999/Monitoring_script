@@ -239,3 +239,53 @@ def collect_from_pages(
         if len(results) >= limit:
             break
     return results, failed_pages
+
+
+def fetch_detail(
+    category: str,
+    url: str,
+    timeout: int,
+    proxies: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
+    """Deep-fetch a single URL to enrich fields for LLM and rendering.
+
+    Returns a dict possibly containing: summary, requirements, deadline,
+    location, work_mode, llm_context.
+    """
+    out: Dict[str, Any] = {}
+    try:
+        dhtml = _fetch(url, timeout=timeout, proxies=proxies)
+    except Exception:
+        return out
+    summary = _first_paragraph(dhtml)
+    req = _find_requirements(dhtml)
+    plain = _strip_tags(_SCRIPT_STYLE_RE.sub(" ", dhtml))
+    deadline = None
+    location = None
+    work_mode = None
+    if category in ("contest", "activity"):
+        deadline = _find_deadline(plain)
+    if category == "internship":
+        location, work_mode = _find_location_and_mode(plain)
+    if summary:
+        out["summary"] = summary
+    if req:
+        out["requirements"] = req
+    if deadline:
+        out["deadline"] = deadline
+    if location:
+        out["location"] = location
+    if work_mode:
+        out["work_mode"] = work_mode
+    # Build llm_context from available pieces; include a body snippet
+    parts: List[str] = []
+    # title will be added by caller if desired; here we focus on body
+    if summary:
+        parts.append(summary)
+    if req:
+        parts.append(req)
+    if plain:
+        parts.append(plain[:1200])
+    if parts:
+        out["llm_context"] = "\n".join(parts)[:1500]
+    return out

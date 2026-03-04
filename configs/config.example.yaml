@@ -44,6 +44,7 @@ sources:
   domains_allowlist_autogen: true
   allowlist_file: "configs/domains_allowlist.yaml"
   enable_live_collect: false  # true to enable live HTTP collection
+  deep_fetch_top1: true       # deep-fetch top1 detail before LLM
   kaggle:
     use_api: true
     search_terms: ["vision", "image", "computer vision", "detection", "segmentation", "multimodal"]
@@ -96,4 +97,3 @@ scoring:
     w_scale: 1.0
     w_topic: 1.5
     w_urgency: 0.5
-
