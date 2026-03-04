@@ -21,7 +21,7 @@ from src.mailer import send_email, MailError
 from src.llm import generate_llm_block, translate_title_summary, LLMError
 from src.alerts import send_alert
 from src.sources.allowlist import load_allowlist
-from src.utils.dates import parse_date_basic, is_within_days
+from src.utils.dates import parse_date_smart, is_within_days
 
 
 def run_once(dry_run: bool = False) -> int:
@@ -90,7 +90,7 @@ def run_once(dry_run: bool = False) -> int:
                 kept: List[Item] = []
                 for it in items:
                     if it.deadline:
-                        dt = parse_date_basic(it.deadline)
+                        dt = parse_date_smart(it.deadline)
                         if dt and dt < datetime.now(timezone.utc):
                             it.status = "expired"
                             expired_filtered += 1
@@ -199,7 +199,7 @@ def run_once(dry_run: bool = False) -> int:
         for cat in ("contest", "activity"):
             it = selected.get(cat)
             if it and it.deadline:
-                dt = parse_date_basic(it.deadline)
+                dt = parse_date_smart(it.deadline)
                 if dt and is_within_days(dt, remind_days):
                     reminders.append(f"{cat}『{it.title}』临近截止: {it.deadline}")
 

@@ -7,7 +7,7 @@ from html import unescape
 from urllib.parse import urljoin, urlparse
 
 from src.sources.allowlist import derive_domain
-from src.utils.dates import parse_date_basic
+from src.utils.dates import parse_date_smart
 
 
 def _fetch(url: str, timeout: int, proxies: Dict[str, str] | None = None, ua: str | None = None) -> str:
@@ -84,11 +84,11 @@ def _find_deadline(text: str) -> Optional[str]:
             dm = date_pat.search(win)
             if dm:
                 ds = dm.group(1)
-                if parse_date_basic(ds):
+                if parse_date_smart(ds):
                     return ds
     # fallback: first date in text
     m = date_pat.search(text)
-    if m and parse_date_basic(m.group(1)):
+    if m and parse_date_smart(m.group(1)):
         return m.group(1)
     return None
 
