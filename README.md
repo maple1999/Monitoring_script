@@ -19,12 +19,16 @@ Daily digest for CV-related contests, activities, and internships. Sends one ema
 python -m src.main --once
 ```
 
-3) Enable live collectors (optional)
+3) Enable live collectors or Kaggle API (optional)
 
 - Edit `configs/config.yaml`:
-  - `sources.enable_live_collect: true`
-  - Fill `sources.list_pages.*` with list pages you trust
-  - Ensure `configs/domains_allowlist.yaml` 包含可信域名（或开启自动维护）
+  - 使用 Kaggle 官方 API（推荐）：
+    - `sources.kaggle.use_api: true`
+    - 设置环境变量 `KAGGLE_USERNAME` 和 `KAGGLE_KEY`，或将 `kaggle.json` 放到用户目录（~/.kaggle/kaggle.json / C:\Users\你\.kaggle\kaggle.json）
+    - 可调整 `sources.kaggle.search_terms` 以聚焦 CV 相关竞赛
+  - 或开启页面抓取（可选）：
+    - `sources.enable_live_collect: true`
+    - 填充 `sources.list_pages.*`，并在 `configs/domains_allowlist.yaml` 维护可信域名
   - 若在阿里云广州等环境，请在 `network.http_proxy/https_proxy` 中设置代理
 
 4) Schedule on server (recommended)

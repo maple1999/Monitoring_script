@@ -121,27 +121,40 @@ def parse_simple_yaml(text: str) -> Dict[str, Any]:
     return root
 
 
-def load_config() -> Dict[str, Any]:
-    # Prefer user config; fallback to example
-    base_path = os.path.join("configs", "config.yaml")
-    example_path = os.path.join("configs", "config.example.yaml")
-    path = base_path if os.path.exists(base_path) else example_path
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
+def _load_yaml_text(text: str) -> Dict[str, Any]:
     try:
         import yaml  # type: ignore
         data = yaml.safe_load(text)
         if not isinstance(data, dict):
             raise TypeError("YAML root must be a mapping")
+        return data
     except Exception:
-        data = parse_simple_yaml(text)
+        return parse_simple_yaml(text)
+
+
+def load_config() -> Dict[str, Any]:
+    # Prefer user config; fallback to example on parse error
+    base_path = os.path.join("configs", "config.yaml")
+    example_path = os.path.join("configs", "config.example.yaml")
+    data: Dict[str, Any] = {}
+    if os.path.exists(base_path):
+        with open(base_path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read().lstrip("\ufeff")
+        try:
+            data = _load_yaml_text(text)
+        except Exception:
+            data = {}
+    if not data:
+        with open(example_path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read().lstrip("\ufeff")
+        data = _load_yaml_text(text)
 
     # Inject env secrets
     smtp_pw = os.getenv("SMTP_PASSWORD")
     if smtp_pw:
         data.setdefault("smtp", {})["password_env"] = "SMTP_PASSWORD"
-    llm_key = os.getenv("LLM_API_KEY")
-    if llm_key:
-        data.setdefault("llm", {})["api_key_env"] = "LLM_API_KEY"
+    # respect provider env name if configured
+    llm_env_name = data.get("llm", {}).get("api_key_env") or "LLM_API_KEY"
+    if os.getenv(llm_env_name):
+        data.setdefault("llm", {})["api_key_env"] = llm_env_name
     return data
-

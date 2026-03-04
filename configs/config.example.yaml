@@ -2,7 +2,7 @@
 
 schedule:
   time: "08:45"
-  timezone: "Asia/Singapore"
+  timezone: "Asia/Shanghai"
 
 limits:
   contest_candidates: 15
@@ -44,6 +44,10 @@ sources:
   domains_allowlist_autogen: true
   allowlist_file: "configs/domains_allowlist.yaml"
   enable_live_collect: false  # true to enable live HTTP collection
+  kaggle:
+    use_api: true
+    search_terms: ["vision", "image", "computer vision"]
+    pages: 1
   list_pages:
     contest: ["https://www.kaggle.com/competitions?sortBy=recentlyCreated"]
     activity: ["https://devpost.com/hackathons"]

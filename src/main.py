@@ -11,6 +11,7 @@ from src.storage.db import Database
 from src.models import Item, RunStatus
 from src.collector.stub import collect as collect_stub
 from src.collector.live import collect_from_pages
+from src.collector.kaggle_api import collect_kaggle_contests
 from src.parser.normalizer import normalize_raw
 from src.dedup import apply_dedup
 from src.scorer import score_items
@@ -68,7 +69,16 @@ def run_once(dry_run: bool = False) -> int:
                 )
                 failed_pages_all.extend(failed_pages)
             else:
-                raws = collect_stub(cat, per_cat_limits[cat])
+                # If Kaggle API enabled and category is contest, use it
+                if cat == "contest" and cfg.get("sources", {}).get("kaggle", {}).get("use_api", True):
+                    kt = cfg.get("sources", {}).get("kaggle", {})
+                    terms = list(kt.get("search_terms", []))
+                    pages_k = int(kt.get("pages", 1))
+                    raws, k_err = collect_kaggle_contests(terms, include_kw, exclude_kw, per_cat_limits[cat], pages=pages_k)
+                    if k_err:
+                        failed_pages_all.append(f"kaggle_api:{k_err}")
+                else:
+                    raws = collect_stub(cat, per_cat_limits[cat])
 
             raw_count = len(raws)
             items = [normalize_raw(cat, r) for r in raws]
@@ -276,4 +286,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
