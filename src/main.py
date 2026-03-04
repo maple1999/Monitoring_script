@@ -179,38 +179,55 @@ def run_once(dry_run: bool = False) -> int:
                         degraded_notice.append(f"{cat} 匹配度低于阈值")
                         alert_events.append({"type": "Content", "affected": cat, "msg": "匹配度低于阈值"})
 
-        # LLM block generation per selected item (with cache reuse)
+        # LLM block generation per selected item: cache reuse + batch call for remaining
         llm_fail = False
+        to_eval: List[Item] = []
         for cat, it in selected.items():
-            try:
-                # Try to reuse existing LLM results from DB when content/model unchanged
-                existing = db.get_by_url(it.url)
-                cache_key = compute_llm_cache_key(cfg, it)
-                reused = False
-                if existing:
-                    # fill missing translations/fields from DB to avoid re-calls
-                    if not it.summary and existing.get("summary"):
-                        it.summary = existing.get("summary")
-                    if not it.requirements and existing.get("requirements"):
-                        it.requirements = existing.get("requirements")
-                    if not it.title_zh and existing.get("title_zh"):
-                        it.title_zh = existing.get("title_zh")
-                    if not it.summary_zh and existing.get("summary_zh"):
-                        it.summary_zh = existing.get("summary_zh")
-                    # reuse llm_block if hash matches
-                    if existing.get("llm_hash") == cache_key and existing.get("llm_block"):
-                        it.llm_block = existing.get("llm_block")
-                        it.llm_hash = cache_key
-                        reused = True
-
-                if not reused:
-                    block = generate_llm_block(cfg, it)
-                    it.llm_block = block
+            # Try reuse
+            existing = db.get_by_url(it.url)
+            cache_key = compute_llm_cache_key(cfg, it)
+            reused = False
+            if existing:
+                if not it.summary and existing.get("summary"):
+                    it.summary = existing.get("summary")
+                if not it.requirements and existing.get("requirements"):
+                    it.requirements = existing.get("requirements")
+                if not it.title_zh and existing.get("title_zh"):
+                    it.title_zh = existing.get("title_zh")
+                if not it.summary_zh and existing.get("summary_zh"):
+                    it.summary_zh = existing.get("summary_zh")
+                if existing.get("llm_hash") == cache_key and existing.get("llm_block"):
+                    it.llm_block = existing.get("llm_block")
                     it.llm_hash = cache_key
-                    translate_title_summary(cfg, it)
-            except LLMError:
-                llm_fail = True
-                it.llm_block = None
+                    reused = True
+            if not reused:
+                to_eval.append(it)
+
+        # Batch evaluate remaining items
+        if to_eval:
+            from src.llm import batch_generate_llm, validate_llm_block
+            results = batch_generate_llm(cfg, to_eval)
+            for it in list(to_eval):
+                res = results.get(it.url)
+                if res and res.get("llm_block") and validate_llm_block(res["llm_block"]):
+                    it.llm_block = res["llm_block"]
+                    it.llm_hash = compute_llm_cache_key(cfg, it)
+                    if res.get("title_zh") and not it.title_zh:
+                        it.title_zh = res["title_zh"]
+                    if res.get("summary_zh") and not it.summary_zh:
+                        it.summary_zh = res["summary_zh"]
+                else:
+                    # Fallback per-item if batch failed or invalid
+                    try:
+                        block = generate_llm_block(cfg, it)
+                        it.llm_block = block
+                        it.llm_hash = compute_llm_cache_key(cfg, it)
+                        # Only translate if still needed
+                        translate_title_summary(cfg, it)
+                    except LLMError:
+                        llm_fail = True
+                        it.llm_block = None
+
         if llm_fail:
             degraded_notice.append("LLM 不可用，已使用 Fallback 文本")
             alert_events.append({"type": "LLM", "affected": "比赛/活动/实习", "msg": "LLM 失败或不可用"})

@@ -8,6 +8,7 @@ from urllib import request, error
 
 from src.models import Item
 import hashlib
+import re
 
 
 class LLMError(Exception):
@@ -80,6 +81,111 @@ def compute_llm_cache_key(cfg: Dict, item: Item) -> str:
     }
     h = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     return h
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?(.*?)```", re.S | re.I)
+
+
+def _extract_json_blob(text: str) -> Optional[str]:
+    t = text.strip()
+    m = _JSON_FENCE_RE.search(t)
+    if m:
+        return m.group(1).strip()
+    # try plain json
+    if t.startswith("[") or t.startswith("{"):
+        return t
+    return None
+
+
+def batch_generate_llm(cfg: Dict, items: list[Item]) -> Dict[str, Dict[str, str]]:
+    """Batch-generate LLM evaluations for multiple items in one request.
+
+    Returns a mapping by url: { 'llm_block': str, 'title_zh': str|None, 'summary_zh': str|None }
+    """
+    if not items:
+        return {}
+    llm_cfg = cfg.get("llm", {})
+    api_key = os.getenv(llm_cfg.get("api_key_env", "LLM_API_KEY"))
+    if not api_key:
+        return {}
+    provider = llm_cfg.get("provider", "openai_compatible")
+    model = llm_cfg.get("model", "gpt-3.5-turbo")
+    base_url = llm_cfg.get("base_url", "https://api.openai.com/v1")
+    temperature = float(llm_cfg.get("temperature", 0.2))
+    timeout = int(llm_cfg.get("timeout_seconds", 20))
+    primary_lang = cfg.get("language", {}).get("primary", "zh")
+
+    proxies = None
+    net_cfg = cfg.get("network", {})
+    http_proxy = net_cfg.get("http_proxy") or os.getenv("HTTP_PROXY")
+    https_proxy = net_cfg.get("https_proxy") or os.getenv("HTTPS_PROXY")
+    if http_proxy or https_proxy:
+        proxies = {"http": http_proxy or "", "https": https_proxy or ""}
+
+    def need_trans_title(it: Item) -> bool:
+        return primary_lang == "zh" and it.title and is_english_text(it.title)
+
+    def need_trans_summary(it: Item) -> bool:
+        return primary_lang == "zh" and it.summary and is_english_text(it.summary or "")
+
+    payload_items = []
+    for it in items:
+        payload_items.append({
+            "id": it.url,  # stable key
+            "category": it.category,
+            "title": it.title,
+            "summary": it.summary,
+            "requirements": it.requirements,
+            "deadline": it.deadline if it.category in ("contest", "activity") else None,
+            "location": it.location if it.category == "internship" else None,
+            "work_mode": it.work_mode if it.category == "internship" else None,
+            "tags": it.tags,
+            "need_trans_title": need_trans_title(it),
+            "need_trans_summary": need_trans_summary(it),
+            "context_excerpt": (it.llm_context or "")[:1200],
+        })
+
+    system = (
+        "你是一个严格的技术评审助手。对每个条目生成单段落的评审文本（严格按模板），"
+        "并将评审文本与（如需）中文翻译一起以 JSON 数组返回。JSON 中每个对象必须包含：\n"
+        "id, llm_block, title_zh(可为空), summary_zh(可为空)。\n"
+        "llm_block 必须严格按模板且是单段文本：\n"
+        "难点评估：数据难点=…；工程难点=…；数学/算法难点=…；匹配度：R/5（理由：…）；评价：…（2句，逻辑严谨、无比喻）；补充信息：…（无则写“无”）。\n"
+        "如果 need_trans_title 为 true，提供 title_zh 为中文标题；否则 title_zh 为空字符串。\n"
+        "如果 need_trans_summary 为 true，提供 summary_zh 为中文摘要；否则 summary_zh 为空字符串。\n"
+        "不要输出除 JSON 以外的任何内容。"
+    )
+    user = json.dumps({"items": payload_items, "language": primary_lang}, ensure_ascii=False)
+
+    try:
+        content = call_openai_compatible(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=temperature,
+            timeout=timeout,
+            proxies=proxies,
+        )
+        blob = _extract_json_blob(content) or content
+        data = json.loads(blob)
+        out: Dict[str, Dict[str, str]] = {}
+        if isinstance(data, list):
+            for obj in data:
+                try:
+                    _id = obj.get("id")
+                    if not _id:
+                        continue
+                    out[_id] = {
+                        "llm_block": (obj.get("llm_block") or "").strip(),
+                        "title_zh": (obj.get("title_zh") or "").strip(),
+                        "summary_zh": (obj.get("summary_zh") or "").strip(),
+                    }
+                except Exception:
+                    continue
+        return out
+    except Exception:
+        return {}
 
 
 def validate_llm_block(text: str) -> bool:
