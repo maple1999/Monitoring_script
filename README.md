@@ -43,7 +43,37 @@ PY
 
 - See `configs/config.example.yaml` for all knobs and defaults.
 - Secrets must be passed via environment variables (no secrets in git).
- - LLM config in `llm.*`，支持 OpenAI 兼容接口；翻译仅在纯英文标题/摘要时启用。
+- LLM config in `llm.*`，支持 OpenAI 兼容接口；翻译仅在纯英文标题/摘要时启用。
+
+### NVIDIA 免费 API 配置
+
+- 该项目已兼容 NVIDIA AI Endpoints（OpenAI-Compatible）。示例配置：
+
+```
+llm:
+  enabled: true
+  provider: openai_compatible
+  base_url: https://integrate.api.nvidia.com/v1
+  model: meta/llama-3.1-8b-instruct
+  temperature: 0.2
+  timeout_seconds: 20
+  api_key_env: NVIDIA_API_KEY
+```
+
+- 设置环境变量：
+
+```
+export NVIDIA_API_KEY=your_key_here   # Linux/macOS
+setx NVIDIA_API_KEY your_key_here     # Windows PowerShell 需重新打开终端
+```
+
+- 烟囱测试（不会发送邮件）：
+
+```
+python scripts/llm_smoke.py
+```
+
+- 若需代理（阿里云广州等环境）：在 `configs/config.yaml` 中设置 `network.http_proxy/https_proxy`。
 
 ## Development
 

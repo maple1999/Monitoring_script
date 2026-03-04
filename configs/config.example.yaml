@@ -60,10 +60,11 @@ network:
 llm:
   enabled: true
   provider: "openai_compatible"
-  base_url: "https://api.openai.com/v1"  # or your compatible endpoint
-  model: "gpt-3.5-turbo"
+  base_url: "https://integrate.api.nvidia.com/v1"  # NVIDIA AI Endpoints (OpenAI-compatible)
+  model: "meta/llama-3.1-8b-instruct"              # choose a supported model id
   temperature: 0.2
   timeout_seconds: 20
+  api_key_env: "NVIDIA_API_KEY"                    # set this env var with your key
 
 smtp:
   host: "smtp.163.com"
