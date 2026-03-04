@@ -268,25 +268,77 @@ def generate_llm_block(cfg: Dict, item: Item) -> Optional[str]:
     if http_proxy or https_proxy:
         proxies = {"http": http_proxy or "", "https": https_proxy or ""}
 
-    prompt = build_prompt(item, primary_lang)
-    messages = prompt["messages"]
+    # Single-item combined evaluation + optional translations via JSON
+    need_trans_title = (primary_lang == "zh" and item.title and is_english_text(item.title)) and not item.title_zh
+    need_trans_summary = (primary_lang == "zh" and item.summary and is_english_text(item.summary or "")) and not item.summary_zh
+    system = (
+        "你是一个严格的技术评审助手。你需要基于提供的条目信息："
+        "(1) 生成一个单段落评审文本（严格按模板）；(2) 如需要则返回中文标题与中文摘要。\n"
+        "仅输出一个 JSON 对象，包含字段：llm_block, title_zh, summary_zh。\n"
+        "llm_block 必须严格按模板且为单段文本："
+        "难点评估：数据难点=…；工程难点=…；数学/算法难点=…；匹配度：R/5（理由：…）；评价：…（2句，逻辑严谨、无比喻）；补充信息：…（无则写“无”）。\n"
+        "如果不需要翻译，将 title_zh 或 summary_zh 设为空字符串。不要输出除 JSON 以外的任何内容。"
+    )
+    user_obj = {
+        "item": {
+            "category": item.category,
+            "title": item.title,
+            "summary": item.summary,
+            "requirements": item.requirements,
+            "deadline": item.deadline if item.category in ("contest", "activity") else None,
+            "location": item.location if item.category == "internship" else None,
+            "work_mode": item.work_mode if item.category == "internship" else None,
+            "tags": item.tags,
+            "url": item.url,
+            "context_excerpt": (item.llm_context or "")[:1200],
+        },
+        "language": primary_lang,
+        "need_trans_title": bool(need_trans_title),
+        "need_trans_summary": bool(need_trans_summary),
+    }
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": json.dumps(user_obj, ensure_ascii=False)},
+    ]
 
-    if provider == "openai_compatible":
-        text = call_openai_compatible(
-            api_key=api_key,
-            model=model,
-            base_url=base_url,
-            messages=messages,
-            temperature=temperature,
-            timeout=timeout,
-            proxies=proxies,
-        )
-    else:
+    if provider != "openai_compatible":
         raise LLMError(f"Unsupported provider: {provider}")
 
+    content = call_openai_compatible(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        messages=messages,
+        temperature=temperature,
+        timeout=timeout,
+        proxies=proxies,
+    )
+    blob = _extract_json_blob(content) or content
+    try:
+        obj = json.loads(blob)
+        llm_block = (obj.get("llm_block") or "").strip()
+        if obj.get("title_zh") and not item.title_zh:
+            item.title_zh = (obj.get("title_zh") or "").strip()
+        if obj.get("summary_zh") and not item.summary_zh:
+            item.summary_zh = (obj.get("summary_zh") or "").strip()
+        if validate_llm_block(llm_block):
+            return llm_block
+    except Exception:
+        pass
+
+    # fallback: use previous single-text prompt then validate
+    prompt = build_prompt(item, primary_lang)
+    text = call_openai_compatible(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        messages=prompt["messages"],
+        temperature=temperature,
+        timeout=timeout,
+        proxies=proxies,
+    )
     if not validate_llm_block(text):
-        # one retry with stricter instruction
-        messages2 = messages + [
+        messages2 = prompt["messages"] + [
             {"role": "system", "content": "你上次未严格遵循模板。请严格按模板输出单段文本，不要添加额外内容。"}
         ]
         text = call_openai_compatible(
