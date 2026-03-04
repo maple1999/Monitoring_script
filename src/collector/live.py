@@ -31,6 +31,12 @@ _A_RE = re.compile(r"<a\s+[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
 _P_RE = re.compile(r"<p[^>]*>(.*?)</p>", re.I | re.S)
 _META_DESC_RE = re.compile(r"<meta[^>]+name=\"description\"[^>]+content=\"([^\"]*)\"[^>]*>", re.I)
+_META_OG_DESC_RE = re.compile(r"<meta[^>]+property=\"og:description\"[^>]+content=\"([^\"]*)\"[^>]*>", re.I)
+_META_TW_DESC_RE = re.compile(r"<meta[^>]+name=\"twitter:description\"[^>]+content=\"([^\"]*)\"[^>]*>", re.I)
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.I | re.S)
+_HEAD_RE = re.compile(r"<h[1-6][^>]*>(.*?)</h[1-6]>", re.I | re.S)
+_UL_RE = re.compile(r"<ul[^>]*>(.*?)</ul>", re.I | re.S)
+_LI_RE = re.compile(r"<li[^>]*>(.*?)</li>", re.I | re.S)
 
 
 def _extract_links(base_url: str, html: str) -> List[Tuple[str, str]]:
@@ -49,7 +55,7 @@ def _strip_tags(html: str) -> str:
 
 
 def _first_paragraph(html: str) -> Optional[str]:
-    m = _META_DESC_RE.search(html)
+    m = _META_DESC_RE.search(html) or _META_OG_DESC_RE.search(html) or _META_TW_DESC_RE.search(html)
     if m:
         desc = m.group(1).strip()
         if len(desc) >= 20:
@@ -58,7 +64,8 @@ def _first_paragraph(html: str) -> Optional[str]:
         text = _strip_tags(pm.group(1))
         if len(text) >= 15:
             return text
-    body = _strip_tags(html)
+    # remove scripts/styles before stripping
+    body = _strip_tags(_SCRIPT_STYLE_RE.sub(" ", html))
     return body[:280] if body else None
 
 
@@ -87,21 +94,52 @@ def _find_deadline(text: str) -> Optional[str]:
 
 
 def _find_requirements(html: str) -> Optional[str]:
-    # simple heuristic: extract lines near requirement keywords or list items
-    text = _strip_tags(html)
-    blocks = []
-    for kw in ["要求", "资格", "报名条件", "参与方式", "任职要求", "职责", "submission", "requirement", "eligibility"]:
-        for m in re.finditer(re.escape(kw), text, re.I):
-            start = max(0, m.start() - 80)
-            end = min(len(text), m.end() + 160)
-            blk = text[start:end].strip()
-            if blk and blk not in blocks:
-                blocks.append(blk)
-    if not blocks:
+    # Extract around headings and list items
+    candidates = []
+    html2 = _SCRIPT_STYLE_RE.sub(" ", html)
+    # 1) Headings-based extraction
+    heading_kws = [
+        "要求", "任职要求", "岗位要求", "职位要求", "资格", "条件",
+        "职责", "岗位职责", "职位描述", "工作内容",
+        "Requirement", "Requirements", "Qualifications", "Responsibilities", "Job Description",
+    ]
+    for hm in _HEAD_RE.finditer(html2):
+        htxt = _strip_tags(hm.group(1))
+        if any(kw.lower() in htxt.lower() for kw in heading_kws):
+            # window: until next heading or 1500 chars
+            start = hm.end()
+            next_h = _HEAD_RE.search(html2, start)
+            end = next_h.start() if next_h else min(len(html2), start + 4000)
+            win = html2[start:end]
+            # gather list items first
+            lis = _LI_RE.findall(win)
+            li_text = "; ".join([_strip_tags(li) for li in lis])
+            if li_text:
+                candidates.append(li_text)
+            # then paragraphs
+            ps = _P_RE.findall(win)
+            ps_text = "; ".join([_strip_tags(p) for p in ps])
+            if ps_text:
+                candidates.append(ps_text)
+            if candidates:
+                break
+    # 2) Keyword-window if no heading section found
+    if not candidates:
+        text = _strip_tags(html2)
+        blocks = []
+        for kw in ["要求", "资格", "报名条件", "参与方式", "任职要求", "职责", "submission", "requirement", "eligibility"]:
+            for m in re.finditer(re.escape(kw), text, re.I):
+                s = max(0, m.start() - 120)
+                e = min(len(text), m.end() + 240)
+                blk = text[s:e].strip()
+                if blk and blk not in blocks:
+                    blocks.append(blk)
+        if blocks:
+            candidates.append("; ".join(blocks))
+    if not candidates:
         return None
-    # compress
-    joined = "; ".join(blocks)
-    return joined[:500]
+    joined = "; ".join(candidates)
+    return joined[:800]
 
 
 def _find_location_and_mode(text: str) -> Tuple[Optional[str], Optional[str]]:
@@ -165,7 +203,7 @@ def collect_from_pages(
                     dhtml = _fetch(url, timeout=timeout, proxies=proxies)
                     summary = _first_paragraph(dhtml)
                     req = _find_requirements(dhtml)
-                    plain = _strip_tags(dhtml)
+                    plain = _strip_tags(_SCRIPT_STYLE_RE.sub(" ", dhtml))
                     deadline = None
                     location = None
                     work_mode = None
@@ -183,6 +221,15 @@ def collect_from_pages(
                         item["location"] = location
                     if work_mode:
                         item["work_mode"] = work_mode
+                    # llm context: title + summary + req + body snippet
+                    ctx_parts = [title]
+                    if summary:
+                        ctx_parts.append(summary)
+                    if req:
+                        ctx_parts.append(req)
+                    if plain:
+                        ctx_parts.append(plain[:1000])
+                    item["llm_context"] = "\n".join(ctx_parts)[:1500]
                 except Exception:
                     # keep minimal item
                     failed_pages.append(url)

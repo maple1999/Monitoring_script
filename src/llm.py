@@ -36,6 +36,9 @@ def build_prompt(item: Item, primary_lang: str = "zh") -> Dict:
         "url": item.url,
         "language": primary_lang,
     }
+    if item.llm_context:
+        # Provide an additional excerpt for richer context (plain text)
+        context["context_excerpt"] = item.llm_context[:1200]
     user_msg = (
         "请按模板输出单段文本，不要加入额外说明或标头。"
         "若页面未提供/未解析到某信息，必须明确指出‘页面未提供/未解析到’。\n"

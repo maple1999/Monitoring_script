@@ -27,10 +27,10 @@ def normalize_raw(category: str, raw: Dict[str, Any]) -> Item:
         summary_en=raw.get("summary_en"),
         summary_zh=raw.get("summary_zh"),
         tags=list(raw.get("tags", [])),
+        llm_context=raw.get("llm_context"),
         first_seen_time=now_utc(),
         last_seen_time=now_utc(),
         is_new=True,
         status="active",
     )
     return item
-
