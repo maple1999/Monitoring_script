@@ -18,7 +18,11 @@ def _item_block_text(it: Item) -> str:
     if it.deadline and it.category in ("contest", "activity"):
         lines.append(f"截止: {it.deadline}")
     if it.summary:
-        lines.append(f"摘要: {it.summary}")
+        if it.summary_en and it.summary_zh:
+            lines.append(f"[EN] 摘要: {it.summary_en}")
+            lines.append(f"[ZH] 摘要: {it.summary_zh}")
+        else:
+            lines.append(f"摘要: {it.summary}")
     if it.llm_block:
         lines.append(f"{it.llm_block}")
     else:
@@ -38,7 +42,11 @@ def _item_block_html(it: Item) -> str:
     if it.deadline and it.category in ("contest", "activity"):
         parts.append(f"<li>截止: {it.deadline}</li>")
     if it.summary:
-        parts.append(f"<li>摘要: {it.summary}</li>")
+        if it.summary_en and it.summary_zh:
+            parts.append(f"<li>[EN] 摘要: {it.summary_en}</li>")
+            parts.append(f"<li>[ZH] 摘要: {it.summary_zh}</li>")
+        else:
+            parts.append(f"<li>摘要: {it.summary}</li>")
     if it.llm_block:
         parts.append(f"<li>{it.llm_block}</li>")
     else:

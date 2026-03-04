@@ -163,3 +163,48 @@ def generate_llm_block(cfg: Dict, item: Item) -> Optional[str]:
             return None
     return text.strip()
 
+
+def is_english_text(s: str) -> bool:
+    if not s:
+        return False
+    letters = sum(1 for ch in s if "a" <= ch.lower() <= "z" or ch in " -_,.;:!?()[]'\"\n")
+    ratio = letters / max(1, len(s))
+    return ratio > 0.8
+
+
+def translate_title_summary(cfg: Dict, item: Item) -> None:
+    # Only translate when primary language is zh and content is English-only
+    primary_lang = cfg.get("language", {}).get("primary", "zh")
+    mode = cfg.get("translation", {}).get("mode", "title_and_summary")
+    if primary_lang != "zh" or mode != "title_and_summary":
+        return
+    need_title = item.title and is_english_text(item.title)
+    need_summary = item.summary and is_english_text(item.summary or "")
+    if not (need_title or need_summary):
+        return
+
+    llm_cfg = cfg.get("llm", {})
+    api_key = os.getenv(llm_cfg.get("api_key_env", "LLM_API_KEY"))
+    if not api_key:
+        return
+    model = llm_cfg.get("model", "gpt-3.5-turbo")
+    base_url = llm_cfg.get("base_url", "https://api.openai.com/v1")
+    timeout = int(llm_cfg.get("timeout_seconds", 20))
+
+    def _ask(text: str) -> str:
+        msgs = [
+            {"role": "system", "content": "你是专业翻译，请将英文精准翻译成中文，不添加解释。"},
+            {"role": "user", "content": text},
+        ]
+        return call_openai_compatible(api_key, model, base_url, msgs, temperature=0.0, timeout=timeout)
+
+    try:
+        if need_title:
+            item.title_en = item.title
+            item.title_zh = _ask(item.title)
+        if need_summary and item.summary:
+            item.summary_en = item.summary
+            item.summary_zh = _ask(item.summary)
+    except Exception:
+        # best-effort; ignore translation failures
+        pass

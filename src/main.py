@@ -9,14 +9,17 @@ from src.config import load_config
 from src.storage.db import Database
 from src.models import Item, RunStatus
 from src.collector.stub import collect as collect_stub
+from src.collector.live import collect_from_pages
 from src.parser.normalizer import normalize_raw
 from src.dedup import apply_dedup
 from src.scorer import score_items
 from src.selector import pick_top1_per_category
 from src.renderer import render_email
 from src.mailer import send_email, MailError
-from src.llm import generate_llm_block, LLMError
+from src.llm import generate_llm_block, translate_title_summary, LLMError
 from src.alerts import send_alert
+from src.sources.allowlist import load_allowlist
+from src.utils.dates import parse_date_basic, is_within_days
 
 
 def run_once(dry_run: bool = False) -> int:
@@ -34,9 +37,28 @@ def run_once(dry_run: bool = False) -> int:
         }
 
         items_by_cat: Dict[str, List[Item]] = {"contest": [], "activity": [], "internship": []}
-        # M1/M2: stub collectors (fixtures)
+        include_kw = list(cfg.get("keywords", {}).get("include", []))
+        exclude_kw = list(cfg.get("keywords", {}).get("exclude", []))
+        net_cfg = cfg.get("network", {})
+        proxies = {
+            "http": net_cfg.get("http_proxy") or "",
+            "https": net_cfg.get("https_proxy") or "",
+        }
+        timeout = int(net_cfg.get("timeout_seconds", 10))
+
+        # choose collector
+        live_enabled = bool(cfg.get("sources", {}).get("enable_live_collect", False))
+        allowlist_file = cfg.get("sources", {}).get("allowlist_file", "configs/domains_allowlist.yaml")
+        allow = load_allowlist(allowlist_file)
+        list_pages = cfg.get("sources", {}).get("list_pages", {})
+
         for cat in items_by_cat.keys():
-            raws = collect_stub(cat, per_cat_limits[cat])
+            if live_enabled:
+                pages = list(list_pages.get(cat, []))
+                allow_domains = list(allow.get(cat, []))
+                raws = collect_from_pages(cat, pages, allow_domains, include_kw, exclude_kw, per_cat_limits[cat], timeout, proxies)
+            else:
+                raws = collect_stub(cat, per_cat_limits[cat])
             items = [normalize_raw(cat, r) for r in raws]
             items, _ = apply_dedup(db, items, by_url=bool(cfg.get("dedup", {}).get("by_url", True)))
             score_items(cfg, items)
@@ -50,13 +72,30 @@ def run_once(dry_run: bool = False) -> int:
             try:
                 block = generate_llm_block(cfg, it)
                 it.llm_block = block
+                # translate title/summary if pure English and requested
+                translate_title_summary(cfg, it)
             except LLMError as e:
                 llm_fail = True
                 it.llm_block = None
         if llm_fail:
             degraded_notice.append("LLM 不可用，已使用 Fallback 文本")
 
-        overview = {"status": "degraded" if degraded_notice else "success", "notice": "; ".join(degraded_notice)}
+        # deadline reminders
+        remind_days = int(cfg.get("deadline", {}).get("remind_days", 14))
+        reminders: List[str] = []
+        for cat in ("contest", "activity"):
+            it = selected.get(cat)
+            if it and it.deadline:
+                dt = parse_date_basic(it.deadline)
+                if dt and is_within_days(dt, remind_days):
+                    reminders.append(f"{cat}『{it.title}』临近截止: {it.deadline}")
+
+        notice_parts = []
+        if degraded_notice:
+            notice_parts.extend(degraded_notice)
+        if reminders:
+            notice_parts.append("；".join(reminders))
+        overview = {"status": "degraded" if degraded_notice else "success", "notice": "；".join(notice_parts)}
         email = render_email(selected, overview)
 
         if not dry_run:
@@ -104,4 +143,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

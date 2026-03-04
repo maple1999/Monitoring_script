@@ -4,6 +4,7 @@ from typing import Dict, List
 from datetime import datetime, timezone
 
 from src.models import Item
+from src.sources.allowlist import derive_domain
 
 
 def score_items(cfg: Dict, items: List[Item]):
@@ -31,9 +32,13 @@ def score_items(cfg: Dict, items: List[Item]):
             score += w_topic
         elif any(t in tags for t in ["多模态", "multimodal", "aigc", "vlm", "llm"]):
             score += 0.7 * w_topic
+        # scale proxy by domain/company
+        dom = derive_domain(it.url)
+        top_domains = set(cfg.get("sources", {}).get("top_company_domains", []))
+        if dom and any(dom == d or dom.endswith("." + d) for d in top_domains):
+            score += w_scale
         # urgency for contest/activity
         if it.category in ("contest", "activity") and it.deadline:
             # simple heuristic: if contains '2026' like strings and soon
             score += 0.2 * w_urgency
         it.match_score = round(score, 3)
-
