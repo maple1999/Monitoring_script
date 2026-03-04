@@ -18,7 +18,7 @@ from src.scorer import score_items
 from src.selector import pick_top1_per_category
 from src.renderer import render_email
 from src.mailer import send_email, MailError
-from src.llm import generate_llm_block, translate_title_summary, LLMError
+from src.llm import generate_llm_block, translate_title_summary, compute_llm_cache_key, LLMError
 from src.alerts import send_alert
 from src.sources.allowlist import load_allowlist
 from src.utils.dates import parse_date_smart, is_within_days
@@ -179,13 +179,35 @@ def run_once(dry_run: bool = False) -> int:
                         degraded_notice.append(f"{cat} 匹配度低于阈值")
                         alert_events.append({"type": "Content", "affected": cat, "msg": "匹配度低于阈值"})
 
-        # LLM block generation per selected item
+        # LLM block generation per selected item (with cache reuse)
         llm_fail = False
         for cat, it in selected.items():
             try:
-                block = generate_llm_block(cfg, it)
-                it.llm_block = block
-                translate_title_summary(cfg, it)
+                # Try to reuse existing LLM results from DB when content/model unchanged
+                existing = db.get_by_url(it.url)
+                cache_key = compute_llm_cache_key(cfg, it)
+                reused = False
+                if existing:
+                    # fill missing translations/fields from DB to avoid re-calls
+                    if not it.summary and existing.get("summary"):
+                        it.summary = existing.get("summary")
+                    if not it.requirements and existing.get("requirements"):
+                        it.requirements = existing.get("requirements")
+                    if not it.title_zh and existing.get("title_zh"):
+                        it.title_zh = existing.get("title_zh")
+                    if not it.summary_zh and existing.get("summary_zh"):
+                        it.summary_zh = existing.get("summary_zh")
+                    # reuse llm_block if hash matches
+                    if existing.get("llm_hash") == cache_key and existing.get("llm_block"):
+                        it.llm_block = existing.get("llm_block")
+                        it.llm_hash = cache_key
+                        reused = True
+
+                if not reused:
+                    block = generate_llm_block(cfg, it)
+                    it.llm_block = block
+                    it.llm_hash = cache_key
+                    translate_title_summary(cfg, it)
             except LLMError:
                 llm_fail = True
                 it.llm_block = None

@@ -48,6 +48,7 @@ class Item:
     match_score: Optional[float] = None
     # rendered
     llm_block: Optional[str] = None
+    llm_hash: Optional[str] = None
     # extra context for LLM (plain text snippet)
     llm_context: Optional[str] = None
 
@@ -58,4 +59,3 @@ def now_utc() -> datetime:
 
 def now_sgt() -> datetime:
     return datetime.now(SINGAPORE_TZ)
-

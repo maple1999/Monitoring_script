@@ -7,6 +7,7 @@ from typing import Dict, Optional
 from urllib import request, error
 
 from src.models import Item
+import hashlib
 
 
 class LLMError(Exception):
@@ -50,6 +51,35 @@ def build_prompt(item: Item, primary_lang: str = "zh") -> Dict:
             {"role": "user", "content": user_msg},
         ]
     }
+
+
+def compute_llm_cache_key(cfg: Dict, item: Item) -> str:
+    """Compute a stable cache key for LLM evaluation based on content + model.
+
+    Includes: category, title, summary, requirements, llm_context, deadline/location/work_mode,
+    tags, url, primary_lang, provider, model.
+    """
+    primary_lang = cfg.get("language", {}).get("primary", "zh")
+    llm_cfg = cfg.get("llm", {})
+    provider = llm_cfg.get("provider", "openai_compatible")
+    model = llm_cfg.get("model", "")
+    payload = {
+        "category": item.category,
+        "title": item.title,
+        "summary": item.summary,
+        "requirements": item.requirements,
+        "llm_context": item.llm_context,
+        "deadline": item.deadline if item.category in ("contest", "activity") else None,
+        "location": item.location if item.category == "internship" else None,
+        "work_mode": item.work_mode if item.category == "internship" else None,
+        "tags": item.tags,
+        "url": item.url,
+        "primary_lang": primary_lang,
+        "provider": provider,
+        "model": model,
+    }
+    h = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return h
 
 
 def validate_llm_block(text: str) -> bool:

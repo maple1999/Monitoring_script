@@ -45,7 +45,8 @@ class Database:
                 is_new INTEGER,
                 status TEXT,
                 match_score REAL,
-                llm_block TEXT
+                llm_block TEXT,
+                llm_hash TEXT
             );
             """
         )
@@ -77,6 +78,14 @@ class Database:
         )
         cur.execute("CREATE INDEX IF NOT EXISTS idx_items_category_status ON items(category, status);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_items_first_seen ON items(first_seen_time);")
+        # Backfill columns if missing (for existing DBs)
+        try:
+            cur.execute("PRAGMA table_info(items);")
+            cols = [r[1] for r in cur.fetchall()]
+            if "llm_hash" not in cols:
+                cur.execute("ALTER TABLE items ADD COLUMN llm_hash TEXT;")
+        except Exception:
+            pass
         self.conn.commit()
 
     def upsert_item(self, item: Item):
@@ -88,8 +97,8 @@ class Database:
                 item_id, url, category, title, source, company_or_org, summary,
                 requirements, location, work_mode, deadline, title_en, title_zh,
                 summary_en, summary_zh, tags, first_seen_time, last_seen_time, is_new,
-                status, match_score, llm_block
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, match_score, llm_block, llm_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(url) DO UPDATE SET
                 title=excluded.title,
                 company_or_org=excluded.company_or_org,
@@ -107,7 +116,8 @@ class Database:
                 is_new=excluded.is_new,
                 status=excluded.status,
                 match_score=excluded.match_score,
-                llm_block=excluded.llm_block
+                llm_block=excluded.llm_block,
+                llm_hash=excluded.llm_hash
             ;
             """,
             (
@@ -133,6 +143,7 @@ class Database:
                 item.status,
                 item.match_score,
                 item.llm_block,
+                item.llm_hash,
             ),
         )
         self.conn.commit()
