@@ -348,9 +348,17 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Do not send email; print to stdout")
     args = parser.parse_args()
 
-    if args.once or True:
+    if args.once:
         code = run_once(dry_run=args.dry_run)
         sys.exit(code)
+    else:
+        # Scheduler mode: read config and run daily at configured time
+        from src.scheduler import run_daily
+        from src.config import load_config as _load_cfg
+        _cfg = _load_cfg()
+        _time = _cfg.get("schedule", {}).get("time", "08:45")
+        _tz = _cfg.get("schedule", {}).get("timezone", "Asia/Shanghai")
+        run_daily(_time, lambda: run_once(False), tz_name=_tz)
 
 
 if __name__ == "__main__":
