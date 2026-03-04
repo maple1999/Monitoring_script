@@ -82,7 +82,8 @@ python scripts/llm_smoke.py
 ## Development
 
 - Install Python 3.10+
-- Optional: `pip install -r requirements-dev.txt` (only for running tests; the core app uses stdlib only in M1)
+- Install deps: `pip install -r requirements.txt`
+- Optional (tests): `pip install -r requirements-dev.txt`
 - Run tests:
 
 ```
@@ -91,5 +92,5 @@ pytest -q
 
 ## Notes
 
-- Network collectors are stubbed in M1 to avoid external dependencies and network flakiness. You can enable live collectors in M2+ via config flags and proxies.
-- LLM integration is planned for M3; for now, the digest includes a simple fallback note.
+- Date parsing uses `dateparser` for robust CN/EN formats (and relative phrases). All parsed datetimes are converted to UTC internally; local preference is Asia/Shanghai.
+- Kaggle API integration requires `kaggle` package and user authentication (see above).

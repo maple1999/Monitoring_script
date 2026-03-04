@@ -42,6 +42,19 @@ EN_MONTHS = {
 }
 
 
+def _normalize_txt(s: str) -> str:
+    if not s:
+        return s
+    trans = {
+        ord('０'): '0', ord('１'): '1', ord('２'): '2', ord('３'): '3', ord('４'): '4',
+        ord('５'): '5', ord('６'): '6', ord('７'): '7', ord('８'): '8', ord('９'): '9',
+        ord('：'): ':', ord('－'): '-', ord('—'): '-', ord('–'): '-', ord('／'): '/', ord('．'): '.',
+        ord('\u00A0'): ' ', ord('\u2002'): ' ', ord('\u2003'): ' ', ord('\u2009'): ' ', ord('\u202F'): ' ',
+    }
+    t = s.translate(trans)
+    return t
+
+
 def parse_date_smart(s: str, now: Optional[datetime] = None, tz_name: str = "Asia/Shanghai") -> Optional[datetime]:
     """Robust parser for common CN/EN date expressions.
 
@@ -55,15 +68,10 @@ def parse_date_smart(s: str, now: Optional[datetime] = None, tz_name: str = "Asi
     """
     if not s:
         return None
-    txt = s.strip()
+    txt = _normalize_txt(s.strip())
     now = now or datetime.now(timezone.utc)
     # Normalize now to local tz for comparisons
     now_local = now.astimezone(_tz(tz_name))
-
-    # 0) Relative CN/EN phrases (today/tomorrow/本周/下周/月底/下月X日)
-    rel = _parse_relative(txt, now_local, tz_name)
-    if rel is not None:
-        return rel
 
     # 1) Explicit Y-M-D separators with optional time
     m = re.search(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2})(?::(\d{2}))?)?", txt)
@@ -77,7 +85,7 @@ def parse_date_smart(s: str, now: Optional[datetime] = None, tz_name: str = "Asi
             return None
 
     # 2) Chinese YYYY年MM月DD日 [HH:MM]
-    m = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日(?:\s*(\d{1,2}):(\d{2}))?", txt)
+    m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\D*(\d{1,2})[:：](\d{2}))?", txt)
     if m:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
         hh = int(m.group(4) or 0)
@@ -152,6 +160,38 @@ def parse_date_smart(s: str, now: Optional[datetime] = None, tz_name: str = "Asi
         except Exception:
             return None
 
+    # 6) Chinese partial 'YYYY年[MM月][DD日]' tolerate missing parts
+    m = re.search(r"(\d{4})年\s*(\d{1,2})?月?\s*(\d{1,2})?日?", txt)
+    if m:
+        y = int(m.group(1))
+        mo = int(m.group(2)) if m.group(2) else 12
+        try:
+            last_day = calendar.monthrange(y, mo)[1]
+        except Exception:
+            last_day = 31
+        d = int(m.group(3)) if m.group(3) else last_day
+        try:
+            return _mk_dt(y, mo, d, 23, 59, tz_name)
+        except Exception:
+            return None
+
+    # 6b) dateparser generic fallback (if installed)
+    try:
+        import dateparser  # type: ignore
+        dtp = dateparser.parse(txt, settings={
+            'PREFER_DATES_FROM': 'future',
+            'TIMEZONE': tz_name,
+            'RETURN_AS_TIMEZONE_AWARE': True,
+        })
+        if dtp is not None:
+            return dtp.astimezone(timezone.utc)
+    except Exception:
+        pass
+
+    # 7) Relative expressions as last resort
+    rel = _parse_relative(txt, now_local, tz_name)
+    if rel is not None:
+        return rel
     return None
 
 
@@ -239,17 +279,36 @@ def _parse_relative(txt: str, now_local: datetime, tz_name: str) -> Optional[dat
     if re.search(r"\bEOD\b", txt, re.I):
         return _mk_dt(now_local.year, now_local.month, now_local.day, 23, 59, tz_name)
 
-    # dateparser fallback (if installed) with future preference
-    try:
-        import dateparser  # type: ignore
-        dt = dateparser.parse(txt, settings={
-            'PREFER_DATES_FROM': 'future',
-            'TIMEZONE': tz_name,
-            'RETURN_AS_TIMEZONE_AWARE': True,
-        })
-        if dt is not None:
-            return dt.astimezone(timezone.utc)
-    except Exception:
-        pass
+    # EN: 'Ends in 2 days', 'in 3 days', '2 days left'
+    m = re.search(r"(?:ends?\s+in|in)\s+(\d+)\s*(day|days|hour|hours|minute|minutes)\b", txt, re.I)
+    if not m:
+        m = re.search(r"(\d+)\s*(day|days|hour|hours|minute|minutes)\s*(left|remaining)?\b", txt, re.I)
+    if m:
+        num = int(m.group(1))
+        unit = m.group(2).lower()
+        delta = None
+        if unit.startswith('day'):
+            delta = timedelta(days=num)
+            dt_local = now_local.replace(hour=23, minute=59) + delta
+        elif unit.startswith('hour'):
+            delta = timedelta(hours=num)
+            dt_local = now_local + delta
+        else:
+            delta = timedelta(minutes=num)
+            dt_local = now_local + delta
+        return dt_local.astimezone(timezone.utc)
+
+    # CN: 'X天后', 'X小时后', '剩余X天/小时', '还剩X天/小时'
+    m = re.search(r"(剩余|还剩)?\s*(\d+)\s*(天|日|小时|分钟)(?:后|之后|后截止|后结束|截止|结束)?", txt)
+    if m:
+        num = int(m.group(2))
+        unit = m.group(3)
+        if unit in ('天', '日'):
+            dt_local = now_local.replace(hour=23, minute=59) + timedelta(days=num)
+        elif unit == '小时':
+            dt_local = now_local + timedelta(hours=num)
+        else:
+            dt_local = now_local + timedelta(minutes=num)
+        return dt_local.astimezone(timezone.utc)
 
     return None
