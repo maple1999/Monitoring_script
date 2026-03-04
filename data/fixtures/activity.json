@@ -1,0 +1,10 @@
+[
+  {
+    "source": "dev_event",
+    "url": "https://events.example.com/cv-hackathon",
+    "title": "CV Hackathon 2026",
+    "summary": "48-hour hackathon focused on object detection.",
+    "deadline": "2026-03-25",
+    "tags": ["cv", "detection"]
+  }
+]

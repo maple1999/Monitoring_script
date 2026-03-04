@@ -1,0 +1,72 @@
+# Copy to configs/config.yaml and fill values.
+
+schedule:
+  time: "08:45"
+  timezone: "Asia/Singapore"
+
+limits:
+  contest_candidates: 15
+  activity_candidates: 15
+  internship_candidates: 30
+
+output:
+  daily_items_per_category: 1
+
+staleness:
+  max_days_active: 30
+
+deadline:
+  remind_days: 14
+
+dedup:
+  by_url: true
+
+internship:
+  default_work_mode: "offline"  # remote/onsite/hybrid/offline
+
+language:
+  primary: "zh"
+
+translation:
+  english_only: true
+  mode: "title_and_summary"
+
+keywords:
+  include: ["cv", "computer vision", "多模态", "AIGC", "VLM", "LLM", "算法", "竞赛", "开发者"]
+  exclude: ["测试", "运维", "销售"]
+
+pm:
+  prefer_ai_pm: true
+  allow_general_pm_fallback: true
+
+sources:
+  domains_allowlist_autogen: true
+  allowlist_file: "configs/domains_allowlist.yaml"
+  enable_live_collect: false  # true in M2+; M1 uses fixtures
+
+network:
+  timeout_seconds: 10
+  retries: 2
+  http_proxy: ""
+  https_proxy: ""
+
+smtp:
+  host: "smtp.163.com"
+  port: 465
+  use_tls: true
+  sender_email: "<FILL_ME>"
+  receiver_email: "<FILL_ME>"
+  # password via env: SMTP_PASSWORD
+
+alerts:
+  enabled: true
+  send_separate_email: true
+
+scoring:
+  weights:
+    w_new: 2.0
+    w_time: 1.0
+    w_scale: 1.0
+    w_topic: 1.5
+    w_urgency: 0.5
+

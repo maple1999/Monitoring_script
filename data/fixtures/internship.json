@@ -1,0 +1,12 @@
+[
+  {
+    "source": "company_y",
+    "url": "https://jobs.example.com/internships/cv-research-intern",
+    "title": "CV Research Intern",
+    "company_or_org": "Company Y AI Lab",
+    "summary": "Research on image generation and diffusion models.",
+    "location": "Guangzhou",
+    "work_mode": "onsite",
+    "tags": ["cv", "aigc"]
+  }
+]

@@ -1,0 +1,18 @@
+[
+  {
+    "source": "kaggle",
+    "url": "https://www.kaggle.com/competitions/example-cv",
+    "title": "Example CV Classification Challenge",
+    "summary": "Classify images into categories; dataset ~50k images.",
+    "deadline": "2026-04-10",
+    "tags": ["cv", "classification"]
+  },
+  {
+    "source": "company_x",
+    "url": "https://company.example.com/ai-contest",
+    "title": "Company AI Contest 2026",
+    "summary": "Vision-language multimodal retrieval task.",
+    "deadline": "2026-04-05",
+    "tags": ["multimodal", "vlm"]
+  }
+]
