@@ -21,10 +21,17 @@ Thumbs.db
 # Local configs and secrets
 configs/config.yaml
 .env
+# Secrets
+api_key.txt
+configs/api_key.txt
+configs/*secret*
+configs/*key*
+.secrets*/
+.env.*
+.env
 
 # Databases and logs
 data/*.db
 *.sqlite
 *.sqlite3
 logs/
-
