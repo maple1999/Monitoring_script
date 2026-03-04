@@ -62,6 +62,17 @@ network:
   http_proxy: ""
   https_proxy: ""
 
+parsing:
+  requirement_heading_keywords: [
+    "要求", "任职要求", "岗位要求", "职位要求", "资格", "条件",
+    "职责", "岗位职责", "职位描述", "工作内容",
+    "Requirement", "Requirements", "Qualifications", "Responsibilities", "Job Description",
+  ]
+  requirement_window_keywords: [
+    "要求", "资格", "报名条件", "参与方式", "任职要求", "职责",
+    "submission", "requirement", "eligibility",
+  ]
+
 llm:
   enabled: true
   provider: "openai_compatible"

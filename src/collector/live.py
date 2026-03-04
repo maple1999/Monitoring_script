@@ -69,7 +69,7 @@ def _first_paragraph(html: str) -> Optional[str]:
     return body[:280] if body else None
 
 
-def _find_deadline(text: str) -> Optional[str]:
+def _find_deadline(text: str, tz_name: str = "Asia/Shanghai") -> Optional[str]:
     # find date token near deadline keywords (中英)
     if not text:
         return None
@@ -84,21 +84,21 @@ def _find_deadline(text: str) -> Optional[str]:
             dm = date_pat.search(win)
             if dm:
                 ds = dm.group(1)
-                if parse_date_smart(ds):
+                if parse_date_smart(ds, tz_name=tz_name):
                     return ds
     # fallback: first date in text
     m = date_pat.search(text)
-    if m and parse_date_smart(m.group(1)):
+    if m and parse_date_smart(m.group(1), tz_name=tz_name):
         return m.group(1)
     return None
 
 
-def _find_requirements(html: str) -> Optional[str]:
+def _find_requirements(html: str, heading_kws: Optional[List[str]] = None, window_kws: Optional[List[str]] = None) -> Optional[str]:
     # Extract around headings and list items
     candidates = []
     html2 = _SCRIPT_STYLE_RE.sub(" ", html)
     # 1) Headings-based extraction
-    heading_kws = [
+    heading_kws = heading_kws or [
         "要求", "任职要求", "岗位要求", "职位要求", "资格", "条件",
         "职责", "岗位职责", "职位描述", "工作内容",
         "Requirement", "Requirements", "Qualifications", "Responsibilities", "Job Description",
@@ -127,7 +127,7 @@ def _find_requirements(html: str) -> Optional[str]:
     if not candidates:
         text = _strip_tags(html2)
         blocks = []
-        for kw in ["要求", "资格", "报名条件", "参与方式", "任职要求", "职责", "submission", "requirement", "eligibility"]:
+        for kw in (window_kws or ["要求", "资格", "报名条件", "参与方式", "任职要求", "职责", "submission", "requirement", "eligibility"]):
             for m in re.finditer(re.escape(kw), text, re.I):
                 s = max(0, m.start() - 120)
                 e = min(len(text), m.end() + 240)
@@ -173,6 +173,9 @@ def collect_from_pages(
     limit: int,
     timeout: int,
     proxies: Dict[str, str] | None = None,
+    tz_name: str = "Asia/Shanghai",
+    req_heading_kws: Optional[List[str]] = None,
+    req_window_kws: Optional[List[str]] = None,
 ) -> tuple[List[Dict[str, Any]], List[str]]:
     results: List[Dict[str, Any]] = []
     failed_pages: List[str] = []
@@ -202,13 +205,13 @@ def collect_from_pages(
                 try:
                     dhtml = _fetch(url, timeout=timeout, proxies=proxies)
                     summary = _first_paragraph(dhtml)
-                    req = _find_requirements(dhtml)
+                    req = _find_requirements(dhtml, heading_kws=req_heading_kws, window_kws=req_window_kws)
                     plain = _strip_tags(_SCRIPT_STYLE_RE.sub(" ", dhtml))
                     deadline = None
                     location = None
                     work_mode = None
                     if category == "activity":
-                        deadline = _find_deadline(plain)
+                        deadline = _find_deadline(plain, tz_name=tz_name)
                     else:
                         location, work_mode = _find_location_and_mode(plain)
                     if summary:
@@ -246,6 +249,9 @@ def fetch_detail(
     url: str,
     timeout: int,
     proxies: Dict[str, str] | None = None,
+    tz_name: str = "Asia/Shanghai",
+    req_heading_kws: Optional[List[str]] = None,
+    req_window_kws: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Deep-fetch a single URL to enrich fields for LLM and rendering.
 
@@ -258,13 +264,13 @@ def fetch_detail(
     except Exception:
         return out
     summary = _first_paragraph(dhtml)
-    req = _find_requirements(dhtml)
+    req = _find_requirements(dhtml, heading_kws=req_heading_kws, window_kws=req_window_kws)
     plain = _strip_tags(_SCRIPT_STYLE_RE.sub(" ", dhtml))
     deadline = None
     location = None
     work_mode = None
     if category in ("contest", "activity"):
-        deadline = _find_deadline(plain)
+        deadline = _find_deadline(plain, tz_name=tz_name)
     if category == "internship":
         location, work_mode = _find_location_and_mode(plain)
     if summary:

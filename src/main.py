@@ -47,12 +47,16 @@ def run_once(dry_run: bool = False) -> int:
 
         include_kw = list(cfg.get("keywords", {}).get("include", []))
         exclude_kw = list(cfg.get("keywords", {}).get("exclude", []))
+        parsing_cfg = cfg.get("parsing", {})
+        req_heading_kws = list(parsing_cfg.get("requirement_heading_keywords", [])) or None
+        req_window_kws = list(parsing_cfg.get("requirement_window_keywords", [])) or None
         net_cfg = cfg.get("network", {})
         proxies = {
             "http": net_cfg.get("http_proxy") or "",
             "https": net_cfg.get("https_proxy") or "",
         }
         timeout = int(net_cfg.get("timeout_seconds", 10))
+        tz_name = cfg.get("schedule", {}).get("timezone", "Asia/Shanghai")
 
         # choose collector
         live_enabled = bool(cfg.get("sources", {}).get("enable_live_collect", False))
@@ -65,7 +69,8 @@ def run_once(dry_run: bool = False) -> int:
                 pages = list(list_pages.get(cat, []))
                 allow_domains = list(allow.get(cat, []))
                 raws, failed_pages = collect_from_pages(
-                    cat, pages, allow_domains, include_kw, exclude_kw, per_cat_limits[cat], timeout, proxies
+                    cat, pages, allow_domains, include_kw, exclude_kw, per_cat_limits[cat], timeout, proxies,
+                    tz_name=tz_name, req_heading_kws=req_heading_kws, req_window_kws=req_window_kws
                 )
                 failed_pages_all.extend(failed_pages)
             else:
@@ -90,7 +95,7 @@ def run_once(dry_run: bool = False) -> int:
                 kept: List[Item] = []
                 for it in items:
                     if it.deadline:
-                        dt = parse_date_smart(it.deadline)
+                        dt = parse_date_smart(it.deadline, tz_name=tz_name)
                         if dt and dt < datetime.now(timezone.utc):
                             it.status = "expired"
                             expired_filtered += 1
@@ -118,7 +123,8 @@ def run_once(dry_run: bool = False) -> int:
                 if not need:
                     continue
                 try:
-                    det = fetch_detail(cat, it.url, timeout=timeout, proxies=proxies)
+                    det = fetch_detail(cat, it.url, timeout=timeout, proxies=proxies,
+                                       tz_name=tz_name, req_heading_kws=req_heading_kws, req_window_kws=req_window_kws)
                     if det.get("summary") and not it.summary:
                         it.summary = det["summary"]
                     if det.get("requirements") and not it.requirements:
@@ -238,7 +244,7 @@ def run_once(dry_run: bool = False) -> int:
         for cat in ("contest", "activity"):
             it = selected.get(cat)
             if it and it.deadline:
-                dt = parse_date_smart(it.deadline)
+                dt = parse_date_smart(it.deadline, tz_name=tz_name)
                 if dt and is_within_days(dt, remind_days):
                     reminders.append(f"{cat}『{it.title}』临近截止: {it.deadline}")
 
